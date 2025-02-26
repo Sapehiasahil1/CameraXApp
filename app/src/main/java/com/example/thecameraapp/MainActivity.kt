@@ -3,12 +3,16 @@
 package com.example.thecameraapp
 
 import android.Manifest
+import android.annotation.SuppressLint
+import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.os.Bundle
+import android.provider.MediaStore
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -16,9 +20,14 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture.OnImageCapturedCallback
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
+import androidx.camera.video.FileOutputOptions
+import androidx.camera.video.MediaStoreOutputOptions
+import androidx.camera.video.Recording
+import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.CameraController
 import androidx.camera.view.LifecycleCameraController
-import androidx.camera.view.video.ExperimentalVideo
+import androidx.camera.view.video.AudioConfig
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -30,6 +39,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.SwitchCamera
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -47,9 +57,12 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.thecameraapp.ui.theme.TheCameraAppTheme
 import kotlinx.coroutines.launch
+import java.io.File
 
 class MainActivity : ComponentActivity() {
-    @androidx.annotation.OptIn(ExperimentalVideo::class)
+
+    private var recording: Recording? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -96,12 +109,13 @@ class MainActivity : ComponentActivity() {
 
                         IconButton(
                             onClick = {
-                                controller.cameraSelector = if(controller.cameraSelector == CameraSelector.DEFAULT_BACK_CAMERA) {
-                                    CameraSelector.DEFAULT_FRONT_CAMERA
-                                } else {
-                                    CameraSelector.DEFAULT_BACK_CAMERA
+                                controller.cameraSelector =
+                                    if (controller.cameraSelector == CameraSelector.DEFAULT_BACK_CAMERA) {
+                                        CameraSelector.DEFAULT_FRONT_CAMERA
+                                    } else {
+                                        CameraSelector.DEFAULT_BACK_CAMERA
 
-                                }
+                                    }
                             },
                             modifier = Modifier
                                 .offset(16.dp, 16.dp)
@@ -118,7 +132,7 @@ class MainActivity : ComponentActivity() {
                                 .align(Alignment.BottomCenter)
                                 .padding(16.dp),
                             horizontalArrangement = Arrangement.SpaceAround
-                        ){
+                        ) {
 
                             IconButton(
                                 onClick = {
@@ -145,6 +159,16 @@ class MainActivity : ComponentActivity() {
                                     contentDescription = "Take photo"
                                 )
                             }
+                            IconButton(
+                                onClick = {
+                                    recordVideo(controller)
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Videocam,
+                                    contentDescription = "Record video"
+                                )
+                            }
 
                         }
                     }
@@ -154,10 +178,66 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @SuppressLint("MissingPermission")
+    private fun recordVideo(controller: LifecycleCameraController) {
+
+        if (recording != null) {
+            recording?.stop()
+            recording = null
+            return
+        }
+
+        if (!hasRequiredPermissions()) {
+            return
+        }
+        //File name
+        val fileName = "recorded_video_${System.currentTimeMillis()}.mp4"
+
+        //Media Store Location
+        val contentValues = ContentValues().apply {
+            put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
+            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/CameraXVideos")
+        }
+//
+        val mediaStoreOutput = MediaStoreOutputOptions.Builder(
+            contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        ).setContentValues(contentValues).build()
+
+        val outputFile = File(filesDir, "my-recording.mp4")
+        recording = controller. startRecording(
+            mediaStoreOutput,
+            AudioConfig.create(true),
+            ContextCompat.getMainExecutor(applicationContext),
+        ) {
+            when(it) {
+                is VideoRecordEvent.Start -> {
+                    Toast.makeText(applicationContext, "Recording started", Toast.LENGTH_SHORT).show()
+                }
+                is VideoRecordEvent.Finalize -> {
+                    if(it.hasError()) {
+                        recording?.close()
+                        recording = null
+
+                        Toast.makeText(applicationContext, "Video capture failed", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(applicationContext, "Video captured", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
+            }
+        }
+
+    }
+
     private fun takePhoto(
         controller: LifecycleCameraController,
         onPhotoTaken: (Bitmap) -> Unit
     ) {
+
+        if (!hasRequiredPermissions())
+            return
+
         controller.takePicture(
             ContextCompat.getMainExecutor(applicationContext),
             object : OnImageCapturedCallback() {
@@ -188,7 +268,8 @@ class MainActivity : ComponentActivity() {
             }
         )
     }
-    private fun decodeBitmap(image : ImageProxy) : Bitmap {
+
+    private fun decodeBitmap(image: ImageProxy): Bitmap {
 
         val buffer = image.planes[0].buffer
         val bytes = ByteArray(buffer.capacity()).also {
@@ -197,6 +278,7 @@ class MainActivity : ComponentActivity() {
 
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
     }
+
     private fun hasRequiredPermissions(): Boolean {
         return CAMERAX_PERMISSIONS.all {
             ContextCompat.checkSelfPermission(
@@ -213,3 +295,4 @@ class MainActivity : ComponentActivity() {
         )
     }
 }
+
